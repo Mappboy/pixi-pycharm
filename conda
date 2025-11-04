@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 
 
 import contextlib
@@ -23,16 +22,7 @@ DEFAULT_PIXI_EXECUTABLE_PATH = (
 
 
 def pixi(cmd):
-    try:
-        out = subprocess.check_output(["pixi", *cmd])
-    except FileNotFoundError as e:
-        # if pixi is not on PATH, try to run it from the default location
-        # see https://pixi.sh/install.sh or https://pixi.sh/install.ps1
-        try:
-            out = subprocess.check_output([str(DEFAULT_PIXI_EXECUTABLE_PATH), *cmd])
-        except FileNotFoundError:
-            msg = "pixi not found. Is it installed in your PATH?"
-            raise FileNotFoundError(msg) from e
+    out = subprocess.check_output(["pixi", *cmd])
     return out.decode(locale.getpreferredencoding())
 
 
@@ -95,17 +85,49 @@ def conda_info_envs_json():
 
 
 def conda_list(args):
-    assert args[1] == "-p" or args[1] == "-n"
-    env = prefix_to_env(args[2]) if args[1] == "-p" else args[2]
-    assert len(args) == 3 or len(args) == 4  # noqa: PLR2004
-    out = pixi_json(["list", *std_pixi_args(), *pixi_env_cli_params(env)])
-    if len(args) == 3:  # noqa: PLR2004
-        lines = ("{name} {version} {build}".format(**pkg) for pkg in out)
+    # Filter out '--json' to handle both old and new argument order
+    # Check if JSON output is requested *before* filtering arguments
+    is_json_output = "--json" in args
+
+    filtered_args = [arg for arg in args if arg != "--json"]
+
+    # Find the environment flag (-n or -p) and its associated value
+    env_flag = None
+    env_value = None
+    if "-n" in filtered_args:
+        env_flag = "-n"
+        # The environment name is the argument immediately following '-n'
+        env_value = filtered_args[filtered_args.index("-n") + 1]
+    elif "-p" in filtered_args:
+        env_flag = "-p"
+        # The environment path is the argument immediately following '-p'
+        env_value = filtered_args[filtered_args.index("-p") + 1]
     else:
-        # observed in PyCharm 2024.1 for Windows
-        assert args[3] == "-e"
-        lines = ("{name}={version}={build}".format(**pkg) for pkg in out)
-    print("\n".join(lines))
+        # Raise an error if no environment is specified
+        raise ValueError("Environment flag '-n' or '-p' not found in arguments.")
+
+    # Determine the environment based on the flag
+    env = prefix_to_env(env_value) if env_flag == "-p" else env_value
+
+    # Get the package list from pixi
+    out = pixi_json(["list", *std_pixi_args(), *pixi_env_cli_params(env)])
+
+    # Determine the output format based on the presence of the '-e' flag,
+    # regardless of its position.
+    if is_json_output:
+        # If --json was requested, dump the raw pixi output as a JSON string
+        print(json.dumps(out))
+    elif "-e" in filtered_args:
+        # Format for 'conda list -e' (e.g., package=1.0.0=build_string)
+        lines = ("{name}={version}={build}".format(**pkg) for pkg in out if out)
+        print("\n".join(lines))
+
+    else:
+        # Default format for 'conda list' (e.g., package 1.0.0 build_string)
+        lines = ("{name} {version} {build}".format(**pkg) for pkg in out)
+
+        print("\n".join(lines))
+
 
 
 def conda_run(args):
@@ -117,18 +139,14 @@ def conda_run(args):
         pixi_run_args = [f'"{arg}"' for arg in args[3:] if arg != "--no-capture-output"]
     else:
         pixi_run_args = [arg for arg in args[3:] if arg != "--no-capture-output"]
-
-    cmd = ["pixi", "run", *std_pixi_args(), *pixi_env_cli_params(env), *pixi_run_args]
-    try:
-        os.execlp("pixi", *cmd)
-    except FileNotFoundError as e:
-        # if pixi is not on PATH, try to run it from the default location
-        # see https://pixi.sh/install.sh or https://pixi.sh/install.ps1
-        try:
-            os.execlp(str(DEFAULT_PIXI_EXECUTABLE_PATH), *cmd)
-        except FileNotFoundError:
-            msg = "pixi not found. Is it installed in your PATH?"
-            raise FileNotFoundError(msg) from e
+    os.execlp(
+        "pixi",
+        "pixi",
+        "run",
+        *std_pixi_args(),
+        *pixi_env_cli_params(env),
+        *pixi_run_args,
+    )
 
 
 def main(args):
@@ -152,10 +170,15 @@ def main(args):
             )
             return 1
         print("Self-check successful.", file=sys.stderr)
-    elif args in (["info", "--envs", "--json"], ["env", "list", "--json"]):
-        # `conda env list --json` (used in CLion 2025.3) returns
-        # the same as `conda info --envs --json`
+    elif args == ["info", "--envs", "--json"]:
         conda_info_envs_json()
+    elif args in (["--version"], ["-V"]):
+        try:
+            # Match conda's output style while surfacing the underlying pixi version
+            pixi_version = pixi(["--version"]).strip().splitlines()[0]
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pixi_version = "pixi (unknown version)"
+        print(f"conda (pixi shim) {pixi_version}")
     elif args[0] == "list":
         conda_list(args)
     elif args[0] == "run":

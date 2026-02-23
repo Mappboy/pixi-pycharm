@@ -99,6 +99,22 @@ def test_info_envs_json(libexec_conda, pixi_project):
     ]
 
 
+def test_version(libexec_conda):
+    run_conda(libexec_conda, "--version")
+
+
+def test_list_json(libexec_conda):
+    result = run_conda(libexec_conda, "list", "--json", "-n", "default")
+    assert isinstance(result, str)
+    assert json.loads(result)
+
+
+def test_update_dry_run(libexec_conda):
+    result = run_conda(libexec_conda, "update", "--dry-run", "--all", "--json", "-n", "default")
+    assert isinstance(result, str)
+    assert json.loads(result)
+
+
 @pytest.mark.parametrize("env", ["default", "py39", "py310", "py311", "py312"])
 @pytest.mark.parametrize("use_prefix", [True, False])
 @pytest.mark.parametrize("use_export_format", [True, False])
@@ -131,7 +147,7 @@ def test_run(libexec_conda, pixi_project, env: str, use_prefix: bool):
         "python",
         "-c",
         "import sys; print(sys.executable)",
-    ).endswith(f"python{'.EXE' if os.name == 'nt' else ''}")
+    ).endswith(f"python{'.exe' if os.name == 'nt' else ''}")
 
 
 def test_not_implemented(libexec_conda, tmp_path):

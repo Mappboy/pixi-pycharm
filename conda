@@ -83,6 +83,36 @@ def conda_info_envs_json():
         },
     )
 
+def conda_update(args):
+    """
+    Handle `conda update --dry-run --all --json -n <env>` used by PyCharm to probe for updates.
+    We respond with an empty JSON structure indicating no planned changes, to avoid IDE crashes.
+    """
+    is_json = "--json" in args
+    # Accept both -n and -p; default to "default" if not provided
+    env = "default"
+    if "-n" in args:
+        env = args[args.index("-n") + 1]
+    elif "-p" in args:
+        env = prefix_to_env(args[args.index("-p") + 1])
+
+    # A conservative, empty dry-run result. Shape mirrors what tools expect enough to not break.
+    payload = {
+        "actions": {
+            "LINK": [],
+            "UNLINK": []
+        },
+        "dry_run": True,
+        "environment": env,
+        "success": True
+    }
+    if is_json:
+        print(json.dumps(payload))
+    else:
+        # Human-readable fallback
+        print(f"No updates planned for environment '{env}' (dry-run).")
+    return 0
+
 
 def conda_list(args):
     # Filter out '--json' to handle both old and new argument order
@@ -172,6 +202,11 @@ def main(args):
         print("Self-check successful.", file=sys.stderr)
     elif args == ["info", "--envs", "--json"]:
         conda_info_envs_json()
+    elif args == ["env", "list", "--json"]:
+        conda_info_envs_json()
+    elif len(args) >= 2 and args[0] == "env" and "list" in args and "--json" in args:
+        # Be tolerant to argument ordering, e.g., ["env", "--json", "list"]
+        conda_info_envs_json()
     elif args in (["--version"], ["-V"]):
         try:
             # Match conda's output style while surfacing the underlying pixi version
@@ -186,6 +221,8 @@ def main(args):
     elif args[0] == "activate":
         msg = f"{args!s}\n`conda activate` not implemented. PyCharm will fallback to `conda run`."
         raise NotImplementedError(msg)
+    elif args and args[0] == "update":
+        return conda_update(args)
     else:
         raise NotImplementedError(str(args))
 
